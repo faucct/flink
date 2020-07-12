@@ -19,6 +19,11 @@ package org.apache.flink.streaming.runtime.streamrecord;
 
 import org.apache.flink.annotation.Internal;
 
+import scala.Array;
+
+import java.util.Arrays;
+import java.util.Objects;
+
 /**
  * One value in a data stream. This stores the value and an optional associated timestamp.
  *
@@ -26,15 +31,41 @@ import org.apache.flink.annotation.Internal;
  */
 @Internal
 public final class StreamRecord<T> extends StreamElement {
+	public interface SourceOrder extends Comparable<SourceOrder> {
+		final class None implements SourceOrder {
+			static None INSTANCE = new None();
 
-	/** The actual value held by this record. */
+			private None() {
+			}
+
+			@Override
+			public int compareTo(SourceOrder o) {
+				if (!(o instanceof None)) {
+					throw new IllegalArgumentException(Objects.toString(o));
+				}
+				return 0;
+			}
+		}
+	}
+
+	/**
+	 * The actual value held by this record.
+	 */
 	private T value;
 
-	/** The timestamp of the record. */
+	/**
+	 * The timestamp of the record.
+	 */
 	private long timestamp;
 
-	/** Flag whether the timestamp is actually set. */
+	/**
+	 * Flag whether the timestamp is actually set.
+	 */
 	private boolean hasTimestamp;
+
+	private SourceOrder sourceOrder;
+
+	private int[] childIds = Array.emptyIntArray();
 
 	/**
 	 * Creates a new StreamRecord. The record does not have a timestamp.
@@ -47,13 +78,29 @@ public final class StreamRecord<T> extends StreamElement {
 	 * Creates a new StreamRecord wrapping the given value. The timestamp is set to the
 	 * given timestamp.
 	 *
-	 * @param value The value to wrap in this {@link StreamRecord}
+	 * @param value     The value to wrap in this {@link StreamRecord}
 	 * @param timestamp The timestamp in milliseconds
 	 */
 	public StreamRecord(T value, long timestamp) {
 		this.value = value;
 		this.timestamp = timestamp;
 		this.hasTimestamp = true;
+	}
+
+	/**
+	 * Creates a new StreamRecord wrapping the given value. The timestamp is set to the
+	 * given timestamp.
+	 *
+	 * @param value     The value to wrap in this {@link StreamRecord}
+	 * @param timestamp The timestamp in milliseconds
+	 * @param childIds  determinism
+	 */
+	public StreamRecord(T value, long timestamp, SourceOrder sourceOrder, int[] childIds) {
+		this.value = value;
+		this.timestamp = timestamp;
+		this.hasTimestamp = true;
+		this.sourceOrder = sourceOrder;
+		this.childIds = childIds;
 	}
 
 	// ------------------------------------------------------------------------
@@ -81,12 +128,29 @@ public final class StreamRecord<T> extends StreamElement {
 		}
 	}
 
-	/** Checks whether this record has a timestamp.
+	/**
+	 * Checks whether this record has a timestamp.
 	 *
- 	 * @return True if the record has a timestamp, false if not.
+	 * @return True if the record has a timestamp, false if not.
 	 */
 	public boolean hasTimestamp() {
 		return hasTimestamp;
+	}
+
+	public SourceOrder getSourceOrder() {
+		return sourceOrder;
+	}
+
+	public int compareChildIds(StreamRecord record) {
+		return Arrays.compare(childIds, record.childIds);
+	}
+
+	public int[] getChildIds() {
+		return childIds;
+	}
+
+	public void setChildIds(int[] childIds) {
+		this.childIds = childIds;
 	}
 
 	// ------------------------------------------------------------------------
@@ -112,7 +176,7 @@ public final class StreamRecord<T> extends StreamElement {
 	 * timestamp with the new timestamp. This returns a StreamElement with the generic type
 	 * parameter that matches the new value.
 	 *
-	 * @param value The new value to wrap in this StreamRecord
+	 * @param value     The new value to wrap in this StreamRecord
 	 * @param timestamp The new timestamp in milliseconds
 	 * @return Returns the StreamElement with replaced value
 	 */
@@ -146,6 +210,7 @@ public final class StreamRecord<T> extends StreamElement {
 		StreamRecord<T> copy = new StreamRecord<>(valueCopy);
 		copy.timestamp = this.timestamp;
 		copy.hasTimestamp = this.hasTimestamp;
+		copy.sourceOrder = this.sourceOrder;
 		return copy;
 	}
 
@@ -167,14 +232,13 @@ public final class StreamRecord<T> extends StreamElement {
 	public boolean equals(Object o) {
 		if (this == o) {
 			return true;
-		}
-		else if (o != null && getClass() == o.getClass()) {
+		} else if (o != null && getClass() == o.getClass()) {
 			StreamRecord<?> that = (StreamRecord<?>) o;
 			return this.hasTimestamp == that.hasTimestamp &&
-					(!this.hasTimestamp || this.timestamp == that.timestamp) &&
-					(this.value == null ? that.value == null : this.value.equals(that.value));
-		}
-		else {
+				(!this.hasTimestamp || this.timestamp == that.timestamp) &&
+				sourceOrder.compareTo(that.sourceOrder) == 0 &&
+				(this.value == null ? that.value == null : this.value.equals(that.value));
+		} else {
 			return false;
 		}
 	}

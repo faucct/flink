@@ -24,6 +24,7 @@ import org.apache.flink.api.common.functions.Function;
 import org.apache.flink.streaming.api.TimeCharacteristic;
 import org.apache.flink.streaming.api.functions.TimestampAssigner;
 import org.apache.flink.streaming.api.watermark.Watermark;
+import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 
 import java.io.Serializable;
 
@@ -222,6 +223,31 @@ public interface SourceFunction<T> extends Function, Serializable {
 		 */
 		@PublicEvolving
 		void collectWithTimestamp(T element, long timestamp);
+
+		/**
+		 * Emits one element from the source, and attaches the given timestamp. This method
+		 * is relevant for programs using {@link TimeCharacteristic#EventTime}, where the
+		 * sources assign timestamps themselves, rather than relying on a {@link TimestampAssigner}
+		 * on the stream.
+		 *
+		 * <p>On certain time characteristics, this timestamp may be ignored or overwritten.
+		 * This allows programs to switch between the different time characteristics and behaviors
+		 * without changing the code of the source functions.
+		 * <ul>
+		 *     <li>On {@link TimeCharacteristic#ProcessingTime}, the timestamp will be ignored,
+		 *         because processing time never works with element timestamps.</li>
+		 *     <li>On {@link TimeCharacteristic#IngestionTime}, the timestamp is overwritten with the
+		 *         system's current time, to realize proper ingestion time semantics.</li>
+		 *     <li>On {@link TimeCharacteristic#EventTime}, the timestamp will be used.</li>
+		 * </ul>
+		 *
+		 * @param element The element to emit
+		 * @param timestamp The timestamp in milliseconds since the Epoch
+		 */
+		@PublicEvolving
+		default void collectWithTimestampAndOrder(T element, long timestamp, StreamRecord.SourceOrder sourceOrder) {
+			collectWithTimestamp(element, timestamp);
+		}
 
 		/**
 		 * Emits the given {@link Watermark}. A Watermark of value {@code t} declares that no

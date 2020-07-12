@@ -23,6 +23,7 @@ import org.apache.flink.streaming.api.watermark.Watermark;
 import org.apache.flink.streaming.runtime.streamrecord.LatencyMarker;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.util.OutputTag;
+import scala.Array;
 
 /**
  * Wrapper around an {@link Output} for user functions that expect a {@link Output}.
@@ -50,12 +51,24 @@ public final class TimestampedCollector<T> implements Output<T> {
 
 	@Override
 	public void collect(T record) {
+		if (reuse.hasTimestamp()) {
+			final int[] childIds = reuse.getChildIds();
+			childIds[childIds.length - 1]++;
+		}
 		output.collect(reuse.replace(record));
+	}
+
+	private static int[] extendedChildIds(int[] in) {
+		final int[] out = new int[in.length + 1];
+		Array.copy(in, 0, out, 0, in.length);
+		out[in.length] = -1;
+		return out;
 	}
 
 	public void setTimestamp(StreamRecord<?> timestampBase) {
 		if (timestampBase.hasTimestamp()) {
 			reuse.setTimestamp(timestampBase.getTimestamp());
+			reuse.setChildIds(extendedChildIds(timestampBase.getChildIds()));
 		} else {
 			reuse.eraseTimestamp();
 		}

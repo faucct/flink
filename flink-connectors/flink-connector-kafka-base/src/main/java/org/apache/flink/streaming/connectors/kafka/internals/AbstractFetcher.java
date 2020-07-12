@@ -27,6 +27,7 @@ import org.apache.flink.metrics.MetricGroup;
 import org.apache.flink.streaming.api.functions.source.SourceFunction.SourceContext;
 import org.apache.flink.streaming.connectors.kafka.config.OffsetCommitMode;
 import org.apache.flink.streaming.connectors.kafka.internals.metrics.KafkaConsumerMetricConstants;
+import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.streaming.runtime.tasks.ProcessingTimeCallback;
 import org.apache.flink.streaming.runtime.tasks.ProcessingTimeService;
 import org.apache.flink.util.SerializedValue;
@@ -34,10 +35,7 @@ import org.apache.flink.util.SerializedValue;
 import javax.annotation.Nonnull;
 
 import java.io.IOException;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Queue;
+import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.stream.Collectors;
 
@@ -331,6 +329,26 @@ public abstract class AbstractFetcher<T, KPH> {
 	//  emitting records
 	// ------------------------------------------------------------------------
 
+	private static final class SourceOrder implements StreamRecord.SourceOrder {
+		static final Comparator<SourceOrder> COMPARATOR = Comparator
+			.comparing((SourceOrder order) -> order.partition.getTopic())
+			.thenComparingInt(order -> order.partition.getPartition())
+			.thenComparingLong(order -> order.offset);
+
+		final KafkaTopicPartition partition;
+		final long offset;
+
+		private SourceOrder(KafkaTopicPartition partition, long offset) {
+			this.partition = partition;
+			this.offset = offset;
+		}
+
+		@Override
+		public int compareTo(StreamRecord.SourceOrder o) {
+			return COMPARATOR.compare(this, (SourceOrder) o);
+		}
+	}
+
 	/**
 	 * Emits a record attaching a timestamp to it.
 	 *  @param records The records to emit
@@ -349,7 +367,11 @@ public abstract class AbstractFetcher<T, KPH> {
 			T record;
 			while ((record = records.poll()) != null) {
 				long timestamp = partitionState.extractTimestamp(record, kafkaEventTimestamp);
-				sourceContext.collectWithTimestamp(record, timestamp);
+				sourceContext.collectWithTimestampAndOrder(
+					record,
+					timestamp,
+					new SourceOrder(partitionState.getKafkaTopicPartition(), offset)
+				);
 
 				// this might emit a watermark, so do it after emitting the record
 				partitionState.onEvent(record, timestamp);

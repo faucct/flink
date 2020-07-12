@@ -127,7 +127,7 @@ public class StateMachineExample {
 				.keyBy(Event::sourceAddress)
 
 				// the function that evaluates the state machine over the sequence of events
-				.flatMap(new StateMachineMapper());
+				.deterministicFlatMap(new StateMachineMapper());
 
 		// output the alerts to std-out
 		if (outputFile == null) {

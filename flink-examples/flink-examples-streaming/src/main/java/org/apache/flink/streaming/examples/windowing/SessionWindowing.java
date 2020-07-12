@@ -17,6 +17,7 @@
 
 package org.apache.flink.streaming.examples.windowing;
 
+import org.apache.flink.api.common.typeinfo.TypeHint;
 import org.apache.flink.api.java.tuple.Tuple3;
 import org.apache.flink.api.java.utils.ParameterTool;
 import org.apache.flink.streaming.api.TimeCharacteristic;
@@ -26,6 +27,7 @@ import org.apache.flink.streaming.api.functions.source.SourceFunction;
 import org.apache.flink.streaming.api.watermark.Watermark;
 import org.apache.flink.streaming.api.windowing.assigners.EventTimeSessionWindows;
 import org.apache.flink.streaming.api.windowing.time.Time;
+import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -35,6 +37,18 @@ import java.util.List;
  * session with gaps of 3 milliseconds.
  */
 public class SessionWindowing {
+	static final class SourceOrder implements StreamRecord.SourceOrder {
+		final int index;
+
+		SourceOrder(int index) {
+			this.index = index;
+		}
+
+		@Override
+		public int compareTo(StreamRecord.SourceOrder o) {
+			return Integer.compare(index, ((SourceOrder) o).index);
+		}
+	}
 
 	@SuppressWarnings("serial")
 	public static void main(String[] args) throws Exception {
@@ -44,7 +58,7 @@ public class SessionWindowing {
 
 		env.getConfig().setGlobalJobParameters(params);
 		env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
-		env.setParallelism(1);
+		env.setParallelism(2);
 
 		final boolean fileOutput = params.has("output");
 
@@ -61,29 +75,33 @@ public class SessionWindowing {
 		// We expect to detect session "b" and "c" at this point as well
 		input.add(new Tuple3<>("c", 11L, 1));
 
-		DataStream<Tuple3<String, Long, Integer>> source = env
-				.addSource(new SourceFunction<Tuple3<String, Long, Integer>>() {
-					private static final long serialVersionUID = 1L;
+		DataStream<Tuple3<String, Long, Integer>> source = env.addSource(new SourceFunction<>() {
+			private static final long serialVersionUID = 1L;
 
-					@Override
-					public void run(SourceContext<Tuple3<String, Long, Integer>> ctx) throws Exception {
-						for (Tuple3<String, Long, Integer> value : input) {
-							ctx.collectWithTimestamp(value, value.f1);
-							ctx.emitWatermark(new Watermark(value.f1 - 1));
-						}
-						ctx.emitWatermark(new Watermark(Long.MAX_VALUE));
-					}
+			@Override
+			public void run(SourceContext<Tuple3<String, Long, Integer>> ctx) throws Exception {
+				int order = 0;
+				for (Tuple3<String, Long, Integer> value : input) {
+					ctx.collectWithTimestampAndOrder(value, value.f1, new SourceOrder(order++));
+					ctx.emitWatermark(new Watermark(value.f1 - 1));
+				}
+				ctx.emitWatermark(new Watermark(Long.MAX_VALUE));
+			}
 
-					@Override
-					public void cancel() {
-					}
-				});
+			@Override
+			public void cancel() {
+			}
+		});
 
 		// We create sessions for each id with max timeout of 3 time units
 		DataStream<Tuple3<String, Long, Integer>> aggregated = source
-				.keyBy(0)
-				.window(EventTimeSessionWindows.withGap(Time.milliseconds(3L)))
-				.sum(2);
+			.map(i -> i).returns(new TypeHint<>() {
+			})
+			.keyBy(0).<Tuple3<String, Long, Integer>>deterministicFlatMap((i, out) -> out.collect(i)).returns(new TypeHint<>() {
+			})
+			.keyBy(0)
+			.window(EventTimeSessionWindows.withGap(Time.milliseconds(3L)))
+			.sum(2);
 
 		if (fileOutput) {
 			aggregated.writeAsText(params.get("output"));
